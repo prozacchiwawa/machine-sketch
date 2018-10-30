@@ -8,7 +8,9 @@ extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
 
-use serde_json::Error;
+use std::env;
+use std::fs::File;
+use std::io::prelude::*;
 
 use na::{Isometry2, Vector2};
 use ncollide2d::shape::{Cuboid, Ball, ShapeHandle};
@@ -20,13 +22,16 @@ use nphysics_testbed2d::Testbed;
 use std::f32::consts::PI;
 use std::f32;
 
+use serde_json::Error;
+
 #[derive(Serialize, Deserialize)]
 struct Gear {
     name: String,
     bodyRadius: f32,
     toothRadius: f32,
     x: f32,
-    y: f32
+    y: f32,
+    pattern: Vec<bool>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -102,7 +107,11 @@ fn gear(
     }
 }
 
-fn main() {
+fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
+    let mut file = File::open(args[1].clone())?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
     /*
      * World
      */
@@ -144,4 +153,20 @@ fn main() {
      */
     let testbed = Testbed::new(world);
     testbed.run();
+
+    return Ok(())
+}
+
+fn main() {
+    // Read the file
+    let args : Vec<String> = std::env::args().collect();
+    if (args.len() <= 1) {
+        println!("Usage: multibody_limits2 [gears.json]");
+        return
+    }
+
+    match run(args) {
+        Ok(_)  => println!("done"),
+        Err(e) => println!("error {:?}", e),
+    }
 }
