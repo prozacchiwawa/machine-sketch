@@ -7,7 +7,21 @@
             "toothRadius": 0.1,
             "x": 0.0,
             "y": 0.0,
-            "pattern": []
+            "teeth": 33,
+            "pattern": [],
+            "subgears": [],
+            "motor": 0.3
+        },
+        {
+            "name": "Gear 2",
+            "bodyRadius": 2.0,
+            "toothRadius": 0.1,
+            "x": 5.25,
+            "y": 0.0,
+            "teeth": 22,
+            "pattern": [],
+            "subgears": [],
+            "motor": 0.0
         }
     ]
 }
