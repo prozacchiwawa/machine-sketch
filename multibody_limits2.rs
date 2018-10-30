@@ -2,6 +2,13 @@ extern crate nalgebra as na;
 extern crate ncollide2d;
 extern crate nphysics2d;
 extern crate nphysics_testbed2d;
+extern crate serde;
+extern crate serde_json;
+
+#[macro_use]
+extern crate serde_derive;
+
+use serde_json::Error;
 
 use na::{Isometry2, Vector2};
 use ncollide2d::shape::{Cuboid, Ball, ShapeHandle};
@@ -12,6 +19,21 @@ use nphysics2d::world::World;
 use nphysics_testbed2d::Testbed;
 use std::f32::consts::PI;
 use std::f32;
+
+#[derive(Serialize, Deserialize)]
+struct Gear {
+    name: String,
+    bodyRadius: f32,
+    toothRadius: f32,
+    x: f32,
+    y: f32
+}
+
+#[derive(Serialize, Deserialize)]
+struct Machine {
+    name: String,
+    gears: Vec<Gear>
+}
 
 const COLLIDER_MARGIN: f32 = 0.01;
 
