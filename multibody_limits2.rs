@@ -11,11 +11,13 @@ extern crate serde_derive;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use na::{Isometry2, Vector2};
 use ncollide2d::shape::{Cuboid, Ball, ShapeHandle};
 use nphysics2d::joint::{FreeJoint, RevoluteJoint};
-use nphysics2d::object::{BodyHandle, Material};
+use nphysics2d::object::{BodyHandle, Material, Body, BodyMut};
 use nphysics2d::volumetric::Volumetric;
 use nphysics2d::world::World;
 use nphysics_testbed2d::Testbed;
@@ -38,16 +40,42 @@ struct Gear {
 }
 
 #[derive(Serialize, Deserialize)]
+struct Pusher {
+    name: String,
+    source_x: f32,
+    source_y: f32,
+    push_away_x: f32,
+    push_away_y: f32,
+    source_plunger_width: f32,
+    target_x: f32,
+    target_y: f32,
+    target_toward_x: f32,
+    target_toward_y: f32,
+    target_plunger_width: f32
+}
+
+#[derive(Serialize, Deserialize)]
 struct Machine {
     name: String,
-    gears: Vec<Gear>
+    gears: Vec<Gear>,
+    pushers: Vec<Pusher>
 }
 
 const COLLIDER_MARGIN: f32 = 0.01;
 
+enum ObjectType {
+    GearType { body : BodyHandle }
+}
+
+struct ObjectData {
+    name : String,
+    objty : ObjectType
+}
+
 fn create_gear(
     parent : BodyHandle,
     gear : &Gear,
+    collection : &mut HashMap<String,ObjectData>,
     world : &mut World<f32>) {
     let geom = ShapeHandle::new(Ball::new(gear.toothRadius));
     let centerGeom = ShapeHandle::new(Ball::new(gear.bodyRadius * 0.99));
@@ -94,8 +122,6 @@ fn create_gear(
         let angle = (fi / fnum) * PI * 2.0;
         let dist = gear.toothRadius + gear.bodyRadius;
         let mut r = RevoluteJoint::new(angle);
-        r.enable_min_angle(angle);
-        r.enable_max_angle(angle);
 
         let posV = Vector2::new(
             dist * angle.sin(),
@@ -118,8 +144,13 @@ fn create_gear(
         );
     }
 
+    collection.insert(gear.name.clone(), ObjectData {
+        name: gear.name.clone(),
+        objty: ObjectType::GearType { body: gearBody }
+    });
+    
     for i in 0usize..(gear.subgears.len()) {
-        create_gear(gearBody,&gear.subgears[i],world);
+        create_gear(gearBody,&gear.subgears[i],collection,world);
     }
 }
 
@@ -128,6 +159,8 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
 
+    let mut collection = HashMap::new();
+    
     let machine : Machine = serde_json::de::from_str(&contents)?;
 
     /*
@@ -146,6 +179,8 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
         ground_rady - COLLIDER_MARGIN,
     )));
 
+    world.set_contact_model(nphysics2d::solver::SignoriniModel::new());
+    
     let ground_pos = Isometry2::new(Vector2::y() * -7.0, na::zero());
     world.add_collider(
         COLLIDER_MARGIN,
@@ -161,14 +196,35 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     let mut parent = BodyHandle::ground();
 
     for i in 0usize..(machine.gears.len()) {
-        create_gear(parent,&machine.gears[i],&mut world);
+        create_gear(parent,&machine.gears[i],&mut collection, &mut world);
     }
 
     /*
      * Set up the testbed.
      */
-    let testbed = Testbed::new(world);
-    testbed.run();
+    {
+        let mut testbed = Testbed::new(world);
+        testbed.add_callback(move |wld,gfx,time| {
+            let world = wld.get_mut();
+            for (name, odata) in &collection {
+                println!("Object {}", name);
+                match odata.objty {
+                    ObjectType::GearType { body } => {
+                        let theBody = world.body(body);
+                        match theBody {
+                            Body::Multibody(v) => {
+                                for l in v.links() {
+                                    println!("Pos {}", l.center_of_mass());
+                                }
+                            }
+                            _ => { }
+                        }
+                    }
+                }
+            }
+        });
+        testbed.run();
+    }
 
     return Ok(())
 }

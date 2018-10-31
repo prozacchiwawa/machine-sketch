@@ -10,7 +10,7 @@
             "teeth": 33,
             "pattern": [],
             "subgears": [],
-            "motor": 0.3
+            "motor": 0.25
         },
         {
             "name": "Gear 2",
@@ -23,5 +23,7 @@
             "subgears": [],
             "motor": 0.0
         }
+    ],
+    "pushers": [
     ]
 }
