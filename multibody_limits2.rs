@@ -14,9 +14,9 @@ use std::io::prelude::*;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use na::{Isometry2, Vector2};
+use na::{Isometry2, Vector2, Unit};
 use ncollide2d::shape::{Cuboid, Ball, ShapeHandle};
-use nphysics2d::joint::{FreeJoint, RevoluteJoint};
+use nphysics2d::joint::{FreeJoint, RevoluteJoint, PrismaticJoint};
 use nphysics2d::object::{BodyHandle, Material, Body, BodyMut};
 use nphysics2d::volumetric::Volumetric;
 use nphysics2d::world::World;
@@ -40,18 +40,19 @@ struct Gear {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Pusher {
-    name: String,
+struct PushEnd {
     source_x: f32,
     source_y: f32,
     push_away_x: f32,
     push_away_y: f32,
-    source_plunger_width: f32,
-    target_x: f32,
-    target_y: f32,
-    target_toward_x: f32,
-    target_toward_y: f32,
-    target_plunger_width: f32
+    plunger_width: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Pusher {
+    name: String,
+    left: PushEnd,
+    right: PushEnd
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,7 +65,8 @@ struct Machine {
 const COLLIDER_MARGIN: f32 = 0.01;
 
 enum ObjectType {
-    GearType { body : BodyHandle }
+    GearType { body : BodyHandle },
+    PusherType { left : BodyHandle, right : BodyHandle }
 }
 
 struct ObjectData {
@@ -154,6 +156,82 @@ fn create_gear(
     }
 }
 
+fn vdist(v : Vector2<f32>) -> f32 {
+    return (v.x * v.x + v.y * v.y).sqrt();
+}
+
+fn create_pusher(
+    parent : BodyHandle,
+    pusher : &Pusher,
+    collection : &mut HashMap<String,ObjectData>,
+    world : &mut World<f32>) {
+    /* Left */
+    let geomLeft = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.left.plunger_width)));
+    let inertia = geomLeft.inertia(1.0);
+    let center_of_mass = geomLeft.center_of_mass();
+    let towardLeft = Vector2::new(
+        pusher.left.push_away_x - pusher.left.source_x,
+        pusher.left.push_away_y - pusher.left.source_y
+    );
+
+    let mut pushSlideLeftJoint =
+        PrismaticJoint::new(Unit::new_normalize(towardLeft), 0.0);
+    let pusherLeftDist = vdist(towardLeft);
+    pushSlideLeftJoint.enable_max_offset(vdist(towardLeft));
+    let pusherLeftHandle = world.add_multibody_link(
+        parent,
+        pushSlideLeftJoint,
+        Vector2::new(pusher.left.source_x, pusher.left.source_y),
+        na::zero(),
+        inertia,
+        center_of_mass
+    );
+
+    world.add_collider(
+        COLLIDER_MARGIN,
+        geomLeft.clone(),
+        pusherLeftHandle,
+        Isometry2::identity(),
+        Material::default(),
+    );
+
+    /* Right */
+    let geomRight = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.right.plunger_width)));
+    let inertia = geomRight.inertia(1.0);
+    let center_of_mass = geomRight.center_of_mass();
+    let towardRight = Vector2::new(
+        pusher.right.push_away_x - pusher.right.source_x,
+        pusher.right.push_away_y - pusher.right.source_y
+    );
+
+    let mut pushSlideRightJoint =
+        PrismaticJoint::new(Unit::new_normalize(towardRight), 0.0);
+    let pusherRightDist = vdist(towardRight);
+    pushSlideRightJoint.enable_max_offset(vdist(towardRight));
+    let pusherRightHandle = world.add_multibody_link(
+        parent,
+        pushSlideRightJoint,
+        Vector2::new(pusher.right.source_x, pusher.right.source_y),
+        na::zero(),
+        inertia,
+        center_of_mass
+    );
+
+    world.add_collider(
+        COLLIDER_MARGIN,
+        geomRight.clone(),
+        pusherRightHandle,
+        Isometry2::identity(),
+        Material::default(),
+    );
+
+    collection.insert(pusher.name.clone(), ObjectData {
+        name: pusher.name.clone(),
+        objty: ObjectType::PusherType
+        { left: pusherLeftHandle, right: pusherRightHandle }
+    });
+}
+
 fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     let mut file = File::open(args[1].clone())?;
     let mut contents = String::new();
@@ -199,6 +277,10 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
         create_gear(parent,&machine.gears[i],&mut collection, &mut world);
     }
 
+    for i in 0usize..(machine.pushers.len()) {
+        create_pusher(parent,&machine.pushers[i],&mut collection, &mut world);
+    }
+
     /*
      * Set up the testbed.
      */
@@ -210,7 +292,10 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
                 println!("Object {}", name);
                 match odata.objty {
                     ObjectType::GearType { body } => {
-                        let theBody = world.body(body);
+                        // Nothing
+                    }
+                    ObjectType::PusherType { left, right } => {
+                        let theBody = world.body(left);
                         match theBody {
                             Body::Multibody(v) => {
                                 for l in v.links() {

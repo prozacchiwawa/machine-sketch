@@ -25,5 +25,21 @@
         }
     ],
     "pushers": [
+        { "name": "Pusher 1",
+          "left": {
+              "source_x": -3.5,
+              "source_y": -1.0,
+              "push_away_x": -4.0,
+              "push_away_y": -1.0,
+              "plunger_width": 0.1
+          },
+          "right": {
+              "source_x": 6.5,
+              "source_y": -2.0,
+              "push_away_x": 7.0,
+              "push_away_y": 2.0,
+              "plunger_width": 0.1
+          }
+        }
     ]
 }
