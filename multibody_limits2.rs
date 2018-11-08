@@ -4,6 +4,7 @@ extern crate nphysics2d;
 extern crate nphysics_testbed2d;
 extern crate serde;
 extern crate serde_json;
+extern crate downcast;
 
 #[macro_use]
 extern crate serde_derive;
@@ -14,16 +15,16 @@ use std::io::prelude::*;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use na::{Isometry2, Vector2, Unit};
+use na::{Isometry2, Vector2, Unit, Point2};
 use ncollide2d::shape::{Cuboid, Ball, ShapeHandle};
-use nphysics2d::joint::{FreeJoint, RevoluteJoint, PrismaticJoint};
+use nphysics2d::joint::{FreeJoint, RevoluteJoint, PrismaticJoint, MouseConstraint, ConstraintHandle};
 use nphysics2d::object::{BodyHandle, Material, Body, BodyMut};
 use nphysics2d::volumetric::Volumetric;
 use nphysics2d::world::World;
 use nphysics_testbed2d::Testbed;
 use std::f32::consts::PI;
 use std::f32;
-
+use downcast::TypeMismatch;
 use serde_json::Error;
 
 #[derive(Serialize, Deserialize)]
@@ -39,7 +40,7 @@ struct Gear {
     subgears: Vec<Gear>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct PushEnd {
     source_x: f32,
     source_y: f32,
@@ -48,7 +49,7 @@ struct PushEnd {
     plunger_width: f32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Pusher {
     name: String,
     left: PushEnd,
@@ -66,7 +67,19 @@ const COLLIDER_MARGIN: f32 = 0.01;
 
 enum ObjectType {
     GearType { body : BodyHandle },
-    PusherType { left : BodyHandle, right : BodyHandle }
+    PusherType
+    { pusher : Pusher,
+      left : BodyHandle,
+      right : BodyHandle,
+      mcleft : ConstraintHandle,
+      mcright : ConstraintHandle
+    }
+}
+
+struct ModifyPusher {
+    pusher : Pusher,
+    mcright : ConstraintHandle,
+    center : Point2<f32>
 }
 
 struct ObjectData {
@@ -195,6 +208,16 @@ fn create_pusher(
         Material::default(),
     );
 
+    let mcleft = MouseConstraint::new(
+        parent,
+        pusherLeftHandle,
+        na::Point2::new(pusher.left.source_x, pusher.left.source_y), 
+        center_of_mass,
+        0.5
+    );
+
+    let mcleftHandle = world.add_constraint(mcleft);
+    
     /* Right */
     let geomRight = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.right.plunger_width)));
     let inertia = geomRight.inertia(1.0);
@@ -225,12 +248,29 @@ fn create_pusher(
         Material::default(),
     );
 
+    let mcright = MouseConstraint::new(
+        parent,
+        pusherRightHandle,
+        na::Point2::new(pusher.right.source_x, pusher.right.source_y), 
+        center_of_mass,
+        0.5
+    );
+
+    let mcrightHandle = world.add_constraint(mcright);
+    
     collection.insert(pusher.name.clone(), ObjectData {
         name: pusher.name.clone(),
         objty: ObjectType::PusherType
-        { left: pusherLeftHandle, right: pusherRightHandle }
+        { pusher: pusher.clone(),
+          left: pusherLeftHandle,
+          right: pusherRightHandle,
+          mcleft: mcleftHandle,
+          mcright: mcrightHandle
+        }
     });
 }
+
+
 
 fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     let mut file = File::open(args[1].clone())?;
@@ -271,7 +311,7 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     /*
      * Setup the multibody.
      */
-    let mut parent = BodyHandle::ground();
+    let parent = BodyHandle::ground();
 
     for i in 0usize..(machine.gears.len()) {
         create_gear(parent,&machine.gears[i],&mut collection, &mut world);
@@ -287,22 +327,66 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     {
         let mut testbed = Testbed::new(world);
         testbed.add_callback(move |wld,gfx,time| {
-            let world = wld.get_mut();
+            let mut world = wld.get_mut();
             for (name, odata) in &collection {
                 println!("Object {}", name);
                 match odata.objty {
                     ObjectType::GearType { body } => {
                         // Nothing
                     }
-                    ObjectType::PusherType { left, right } => {
-                        let theBody = world.body(left);
-                        match theBody {
-                            Body::Multibody(v) => {
-                                for l in v.links() {
-                                    println!("Pos {}", l.center_of_mass());
+                    ObjectType::PusherType { ref pusher, left, right, mcleft, mcright } => {
+                        let mut ch = None;
+                        {
+                            let theBody = world.body(left);
+                            match theBody {
+                                Body::Multibody(v) => {
+                                    for l in v.links() {
+                                        println!("Pos {}", l.center_of_mass());
+                                        ch = Some(ModifyPusher {
+                                            pusher: pusher.clone(),
+                                            mcright: mcright,
+                                            center: l.center_of_mass()
+                                        });
+                                        break
+                                    }
+                                }
+                                _ => { }
+                            }
+                        };
+                        match ch {
+                            Some(pmove) => {
+                                // Determine percentage distance of left
+                                let left_source =
+                                    Vector2::new(pusher.left.source_x, pusher.left.source_y);
+                                let left_target =
+                                    Vector2::new(pusher.left.push_away_x, pusher.left.push_away_y);
+                                let left_center = pmove.center.coords;
+                                let left_mag = vdist(Vector2::new(left_center.x - pusher.left.source_x, left_center.y - pusher.left.source_y));
+                                let left_full = vdist(Vector2::new(left_target.x - left_source.x, left_target.y - left_source.y));
+                                
+                                // XXX todo left_center - source_xy
+                                let travel_distance = left_mag / left_full;
+                                println!("{} travel distance {}", pusher.name.clone(), travel_distance);
+                                let right_source =
+                                    Vector2::new(pusher.right.source_x, pusher.right.source_y);
+                                let right_target =
+                                    Vector2::new(pusher.right.push_away_x, pusher.right.push_away_y);
+                                let right_travel_to =
+                                    Vector2::new(
+                                        pusher.right.source_x + (pusher.right.push_away_x - pusher.right.source_x) * travel_distance,
+                                        pusher.right.source_y + (pusher.right.push_away_y - pusher.right.source_y) * travel_distance
+                                    );
+                                
+                                let right_constraint = world.constraint_mut(mcright);
+                                let right_mouse : Result<& mut MouseConstraint<f32>, downcast::TypeMismatch> = right_constraint.downcast_mut();
+                                match right_mouse {
+                                    Ok(rm) => {
+                                        rm.set_anchor_2(na::Point2::new(right_travel_to.x, right_travel_to.y));
+                                    }
+                                    _ => {}
                                 }
                             }
-                            _ => { }
+                            _ => {}
                         }
                     }
                 }
