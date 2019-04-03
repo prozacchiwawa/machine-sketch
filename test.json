@@ -1,7 +1,7 @@
 {
     "name": "Test Gear Set",
-    "gears": [
-        {
+    "parts": [
+        {"GearPart":{
             "name": "Gear 1",
             "bodyRadius": 3.0,
             "toothRadius": 0.1,
@@ -9,10 +9,10 @@
             "y": 0.0,
             "teeth": 33,
             "pattern": [],
-            "subgears": [],
+            "subs": [],
             "motor": 0.25
-        },
-        {
+        }},
+        {"GearPart":{
             "name": "Gear 2",
             "bodyRadius": 2.0,
             "toothRadius": 0.1,
@@ -20,26 +20,27 @@
             "y": 0.0,
             "teeth": 22,
             "pattern": [],
-            "subgears": [],
+            "subs": [],
             "motor": 0.0
-        }
-    ],
-    "pushers": [
-        { "name": "Pusher 1",
+        }},
+        {"PusherPart":{
+          "name": "Pusher 1",
           "left": {
               "source_x": -3.5,
               "source_y": -1.0,
               "push_away_x": -4.0,
               "push_away_y": -1.0,
-              "plunger_width": 0.1
+              "plunger_size": 0.1,
+              "parts": []
           },
           "right": {
               "source_x": 6.5,
               "source_y": -2.0,
               "push_away_x": 7.0,
               "push_away_y": 2.0,
-              "plunger_width": 0.1
+              "plunger_size": 0.1,
+              "parts": []
           }
-        }
+        }}
     ]
 }

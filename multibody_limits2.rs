@@ -17,17 +17,18 @@ use std::rc::Rc;
 
 use na::{Isometry2, Vector2, Unit, Point2};
 use ncollide2d::shape::{Cuboid, Ball, ShapeHandle};
-use nphysics2d::joint::{FreeJoint, RevoluteJoint, PrismaticJoint, MouseConstraint, ConstraintHandle};
+use nphysics2d::joint::{FreeJoint, RevoluteJoint, PrismaticJoint, MouseConstraint, ConstraintHandle, FixedJoint};
 use nphysics2d::object::{BodyHandle, Material, Body, BodyMut};
 use nphysics2d::volumetric::Volumetric;
 use nphysics2d::world::World;
+use nphysics2d::math::Isometry;
 use nphysics_testbed2d::Testbed;
 use std::f32::consts::PI;
 use std::f32;
 use downcast::TypeMismatch;
 use serde_json::Error;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Gear {
     name: String,
     bodyRadius: f32,
@@ -37,7 +38,24 @@ struct Gear {
     teeth: i16,
     motor: f32,
     pattern: Vec<bool>,
-    subgears: Vec<Gear>
+    subs: Vec<MachinePart>
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+enum ConstraintType {
+    Free,
+    Fixed,
+    Spring(f32),
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Brick {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    hold: ConstraintType,
+    parts: Vec<MachinePart>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -46,7 +64,8 @@ struct PushEnd {
     source_y: f32,
     push_away_x: f32,
     push_away_y: f32,
-    plunger_width: f32,
+    plunger_size: f32,
+    parts: Vec<MachinePart>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -56,14 +75,28 @@ struct Pusher {
     right: PushEnd
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct GearCouple {
+    from: String,
+    toward: String,
+    multiple: f32
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+enum MachinePart {
+    GearPart(Gear),
+    BrickPart(Brick),
+    PusherPart(Pusher),
+    GearCouple(GearCouple)
+}
+
 #[derive(Serialize, Deserialize)]
 struct Machine {
     name: String,
-    gears: Vec<Gear>,
-    pushers: Vec<Pusher>
+    parts: Vec<MachinePart>
 }
 
-const COLLIDER_MARGIN: f32 = 0.01;
+const COLLIDER_MARGIN: f32 = 0.001;
 
 enum ObjectType {
     GearType { body : BodyHandle },
@@ -164,8 +197,8 @@ fn create_gear(
         objty: ObjectType::GearType { body: gearBody }
     });
     
-    for i in 0usize..(gear.subgears.len()) {
-        create_gear(gearBody,&gear.subgears[i],collection,world);
+    for i in 0usize..(gear.subs.len()) {
+        create_part(gearBody, &gear.subs[i], collection, world);
     }
 }
 
@@ -179,7 +212,7 @@ fn create_pusher(
     collection : &mut HashMap<String,ObjectData>,
     world : &mut World<f32>) {
     /* Left */
-    let geomLeft = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.left.plunger_width)));
+    let geomLeft = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.left.plunger_size)));
     let inertia = geomLeft.inertia(1.0);
     let center_of_mass = geomLeft.center_of_mass();
     let towardLeft = Vector2::new(
@@ -187,10 +220,9 @@ fn create_pusher(
         pusher.left.push_away_y - pusher.left.source_y
     );
 
-    let mut pushSlideLeftJoint =
-        PrismaticJoint::new(Unit::new_normalize(towardLeft), 0.0);
     let pusherLeftDist = vdist(towardLeft);
-    pushSlideLeftJoint.enable_max_offset(vdist(towardLeft));
+    let mut pushSlideLeftJoint =
+        PrismaticJoint::new(Unit::new_normalize(towardLeft), pusherLeftDist);
     let pusherLeftHandle = world.add_multibody_link(
         parent,
         pushSlideLeftJoint,
@@ -217,9 +249,9 @@ fn create_pusher(
     );
 
     let mcleftHandle = world.add_constraint(mcleft);
-    
+
     /* Right */
-    let geomRight = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.right.plunger_width)));
+    let geomRight = ShapeHandle::new(Cuboid::new(Vector2::repeat(pusher.right.plunger_size)));
     let inertia = geomRight.inertia(1.0);
     let center_of_mass = geomRight.center_of_mass();
     let towardRight = Vector2::new(
@@ -227,10 +259,9 @@ fn create_pusher(
         pusher.right.push_away_y - pusher.right.source_y
     );
 
-    let mut pushSlideRightJoint =
-        PrismaticJoint::new(Unit::new_normalize(towardRight), 0.0);
     let pusherRightDist = vdist(towardRight);
-    pushSlideRightJoint.enable_max_offset(vdist(towardRight));
+    let mut pushSlideRightJoint =
+        PrismaticJoint::new(Unit::new_normalize(towardRight), pusherRightDist);
     let pusherRightHandle = world.add_multibody_link(
         parent,
         pushSlideRightJoint,
@@ -268,10 +299,81 @@ fn create_pusher(
           mcright: mcrightHandle
         }
     });
+
+    for i in 0usize..(pusher.left.parts.len()) {
+        create_part(
+            pusherLeftHandle,
+            &pusher.left.parts[i],
+            collection,
+            world
+        );
+    }
+    
+    for i in 0usize..(pusher.right.parts.len()) {
+        create_part(
+            pusherRightHandle,
+            &pusher.right.parts[i],
+            collection,
+            world
+        );
+    }    
 }
 
+fn create_brick(
+    parent : BodyHandle,
+    brick : &Brick,
+    collection : &mut HashMap<String,ObjectData>,
+    world : &mut World<f32>) {
+    let geom = ShapeHandle::new(Cuboid::new(Vector2::new(brick.width, brick.height)));
+    let inertia = geom.inertia(1.0);
+    let center_of_mass = geom.center_of_mass();
+    
+    let mut fixedJoint = FixedJoint::new(Isometry::new(na::zero(), na::zero()));
+    let brickHandle = world.add_multibody_link(
+        parent,
+        fixedJoint,
+        Vector2::new(brick.x, brick.y),
+        na::zero(),
+        inertia,
+        center_of_mass
+    );
 
+    world.add_collider(
+        COLLIDER_MARGIN,
+        geom.clone(),
+        brickHandle,
+        Isometry2::identity(),
+        Material::default(),
+    );
 
+    for i in 0usize..(brick.parts.len()) {
+        create_part(
+            brickHandle,
+            &brick.parts[i],
+            collection,
+            world
+        );
+    }
+}
+
+fn create_part(
+    parent : BodyHandle,
+    part : &MachinePart,
+    collection : &mut HashMap<String,ObjectData>,
+    world : &mut World<f32>) {
+    match part {
+        MachinePart::GearPart(gear) => {
+            create_gear(parent, &gear, collection, world);
+        }
+        MachinePart::PusherPart(pusher) => {
+            create_pusher(parent, &pusher, collection, world);
+        }
+        MachinePart::BrickPart(brick) => {
+            create_brick(parent, &brick, collection, world);
+        }
+        _ => { }
+    }
+}
 fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
     let mut file = File::open(args[1].clone())?;
     let mut contents = String::new();
@@ -313,12 +415,8 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
      */
     let parent = BodyHandle::ground();
 
-    for i in 0usize..(machine.gears.len()) {
-        create_gear(parent,&machine.gears[i],&mut collection, &mut world);
-    }
-
-    for i in 0usize..(machine.pushers.len()) {
-        create_pusher(parent,&machine.pushers[i],&mut collection, &mut world);
+    for i in 0usize..(machine.parts.len()) {
+        create_part(parent, &machine.parts[i], &mut collection, &mut world);
     }
 
     /*
