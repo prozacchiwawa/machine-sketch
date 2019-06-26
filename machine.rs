@@ -96,7 +96,7 @@ struct Machine {
     parts: Vec<MachinePart>
 }
 
-const COLLIDER_MARGIN: f32 = 0.001;
+const COLLIDER_MARGIN: f32 = 0.0001;
 
 enum ObjectType {
     GearType { body : BodyHandle },
@@ -137,7 +137,7 @@ fn create_gear(
     if (gear.motor != 0.0) {
         gearSpin.enable_angular_motor();
         gearSpin.set_desired_angular_motor_velocity(gear.motor);
-        gearSpin.set_max_angular_motor_torque(5000.0);
+        gearSpin.set_max_angular_motor_torque(100.0);
     }
 
     let mut gearBody = world.add_multibody_link(
@@ -427,7 +427,7 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
         testbed.add_callback(move |wld,gfx,time| {
             let mut world = wld.get_mut();
             for (name, odata) in &collection {
-                println!("Object {}", name);
+                // println!("Object {}", name);
                 match odata.objty {
                     ObjectType::GearType { body } => {
                         // Nothing
@@ -439,7 +439,7 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
                             match theBody {
                                 Body::Multibody(v) => {
                                     for l in v.links() {
-                                        println!("Pos {}", l.center_of_mass());
+                                        // println!("Pos {}", l.center_of_mass());
                                         ch = Some(ModifyPusher {
                                             pusher: pusher.clone(),
                                             mcright: mcright,
@@ -464,7 +464,7 @@ fn run(args : Vec<String>) -> std::result::Result<(), std::io::Error> {
                                 
                                 // XXX todo left_center - source_xy
                                 let travel_distance = left_mag / left_full;
-                                println!("{} travel distance {}", pusher.name.clone(), travel_distance);
+                                // println!("{} travel distance {}", pusher.name.clone(), travel_distance);
                                 let right_source =
                                     Vector2::new(pusher.right.source_x, pusher.right.source_y);
                                 let right_target =
